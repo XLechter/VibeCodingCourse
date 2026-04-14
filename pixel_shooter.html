@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel Shooter</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+    canvas { display: block; image-rendering: pixelated; }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+
+// ══════════════════════════════════════════ Constants ════════════════════════
+const W = 480, H = 640;
+const LEVEL_TIME = 120;   // seconds total
+const BOSS_AT    = 90;    // boss spawns at 90 s
+
+const C = {
+  BG:     '#08081a',
+  WHITE:  '#ffffff',
+  GRAY:   '#6e6e82',
+  DARK:   '#1c1c30',
+  CYAN:   '#00dcff',
+  BLUE:   '#2878ff',
+  GREEN:  '#00d250',
+  RED:    '#ff3737',
+  ORANGE: '#ff9b00',
+  YELLOW: '#ffe100',
+  PURPLE: '#b900ff',
+};
+
+// ══════════════════════════════════════════ Canvas ═══════════════════════════
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+canvas.width  = W;
+canvas.height = H;
+
+function resize() {
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.style.width  = W * s + 'px';
+  canvas.style.height = H * s + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ══════════════════════════════════════════ Input ════════════════════════════
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))
+    e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function any(...codes) { return codes.some(c => keys[c]); }
+function consume(code) { const v = keys[code]; keys[code] = false; return v; }
+
+// ══════════════════════════════════════════ Pixel Sprites ════════════════════
+function px(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), w, h);
+}
+
+function sprPlayer(cx, cy) {
+  px(cx-4,  cy+10, 8,  6, C.YELLOW);
+  px(cx-6,  cy,   12, 14, C.CYAN);
+  px(cx-14, cy+4,  8, 10, C.BLUE);
+  px(cx+6,  cy+4,  8, 10, C.BLUE);
+  px(cx-2,  cy-4,  4,  8, C.WHITE);
+}
+function sprGrunt(cx, cy) {
+  px(cx-8, cy-8, 16, 12, C.GREEN);
+  px(cx-6, cy-4,  4,  4, C.RED);
+  px(cx+2, cy-4,  4,  4, C.RED);
+  px(cx-8, cy+4,  4,  8, C.GREEN);
+  px(cx-2, cy+4,  4,  8, C.GREEN);
+  px(cx+4, cy+4,  4,  8, C.GREEN);
+}
+function sprShooter(cx, cy) {
+  px(cx-10, cy-8, 20, 16, C.PURPLE);
+  px(cx-8,  cy-4,  6,  6, C.YELLOW);
+  px(cx+2,  cy-4,  6,  6, C.YELLOW);
+  px(cx-2,  cy+8,  4,  8, C.GRAY);
+}
+function sprTank(cx, cy) {
+  px(cx-16, cy-12, 32, 24, C.ORANGE);
+  px(cx-12, cy-8,   8,  8, C.RED);
+  px(cx+4,  cy-8,   8,  8, C.RED);
+  px(cx-4,  cy-4,   8,  8, C.DARK);
+  px(cx-4,  cy+12,  8,  8, C.GRAY);
+}
+function sprBoss(cx, cy, r) {
+  // body colour shifts from purple → red as HP drops
+  const rc = Math.round(80  + 120 * (1 - r));
+  const gc = Math.round(20  + 40  * r);
+  const bc = Math.round(200 * r   + 60 * (1 - r));
+  px(cx-40, cy-30, 80, 60, `rgb(${rc},${gc},${bc})`);
+  px(cx-28, cy-16, 12, 12, C.RED);
+  px(cx+16, cy-16, 12, 12, C.RED);
+  px(cx-20, cy+4,  40,  8, C.DARK);
+  for (let i = 0; i < 40; i += 8) px(cx-20+i, cy+8, 4, 4, C.RED);
+  px(cx-36, cy+14,  8, 20, C.GRAY);
+  px(cx+28, cy+14,  8, 20, C.GRAY);
+  px(cx-8,  cy+16, 16, 16, C.DARK);
+}
+
+// ══════════════════════════════════════════ Stars ════════════════════════════
+class Stars {
+  constructor(n = 90) {
+    this.data = Array.from({length: n}, () => [
+      Math.random() * W,
+      Math.random() * H,
+      Math.random() < 0.3 ? 2 : 1,
+      Math.floor(90 + Math.random() * 165),
+    ]);
+  }
+  update(dt) {
+    for (const s of this.data) {
+      s[1] += s[2] * 60 * dt;
+      if (s[1] > H) { s[0] = Math.random() * W; s[1] = 0; }
+    }
+  }
+  draw() {
+    for (const [x, y, spd, br] of this.data) {
+      ctx.fillStyle = `rgb(${br},${br},${br})`;
+      ctx.fillRect(x, y, spd, spd);
+    }
+  }
+}
+
+// ══════════════════════════════════════════ Explosion ════════════════════════
+class Explosion {
+  constructor(x, y, size = 1) {
+    this.timer = 0;
+    this.life  = 22 / 60;
+    this.parts = Array.from({length: 14 * size}, () => [
+      x + (Math.random() * 36 - 18) * size,
+      y + (Math.random() * 36 - 18) * size,
+      [C.RED, C.ORANGE, C.YELLOW, C.WHITE][Math.floor(Math.random() * 4)],
+    ]);
+  }
+  update(dt) { this.timer += dt; return this.timer < this.life; }
+  draw() {
+    const s = Math.max(1, Math.floor(8 * (1 - this.timer / this.life)));
+    for (const [x, y, col] of this.parts) {
+      ctx.fillStyle = col;
+      ctx.fillRect(x, y, s, s);
+    }
+  }
+}
+
+// ══════════════════════════════════════════ Bullet ═══════════════════════════
+class Bullet {
+  constructor(x, y, dx, dy, color, damage = 1, w = 4, h = 12) {
+    this.x = x; this.y = y;
+    this.dx = dx; this.dy = dy;   // px / second
+    this.color = color; this.damage = damage;
+    this.w = w; this.h = h; this.alive = true;
+  }
+  update(dt) {
+    this.x += this.dx * dt;
+    this.y += this.dy * dt;
+    if (this.x < -this.w || this.x > W + this.w ||
+        this.y < -this.h || this.y > H + this.h) this.alive = false;
+  }
+  draw() {
+    ctx.fillStyle = this.color;
+    ctx.fillRect(this.x - this.w / 2, this.y, this.w, this.h);
+  }
+  rect() { return {x: this.x - this.w/2, y: this.y, w: this.w, h: this.h}; }
+}
+
+// ══════════════════════════════════════════ Player ═══════════════════════════
+class Player {
+  constructor() {
+    this.x = W / 2; this.y = H - 80;
+    this.hp = 5; this.maxHp = 5;
+    this.speed    = 300;  // px/s
+    this.fireCd   = 0;    // seconds
+    this.fireRate = 0.2;  // seconds
+    this.invincible = 0;  // seconds
+    this.bullets = [];
+    this.alive   = true;
+  }
+  update(dt) {
+    if (any('ArrowLeft',  'KeyA') && this.x > 16)     this.x -= this.speed * dt;
+    if (any('ArrowRight', 'KeyD') && this.x < W - 16) this.x += this.speed * dt;
+    if (any('ArrowUp',    'KeyW') && this.y > 44)     this.y -= this.speed * dt;
+    if (any('ArrowDown',  'KeyS') && this.y < H - 22) this.y += this.speed * dt;
+
+    this.fireCd -= dt;
+    if (this.fireCd <= 0) {
+      this.bullets.push(new Bullet(this.x, this.y - 14, 0, -600, C.CYAN));
+      this.fireCd = this.fireRate;
+    }
+    if (this.invincible > 0) this.invincible -= dt;
+    for (const b of this.bullets) b.update(dt);
+    this.bullets = this.bullets.filter(b => b.alive);
+  }
+  takeDamage() {
+    if (this.invincible > 0) return false;
+    this.hp--;
+    this.invincible = 1.5;
+    if (this.hp <= 0) this.alive = false;
+    return true;
+  }
+  rect() { return {x: this.x - 12, y: this.y - 14, w: 24, h: 28}; }
+  draw() {
+    if (this.invincible > 0 && Math.floor(this.invincible * 10) % 2 === 0) return;
+    sprPlayer(this.x, this.y);
+    for (const b of this.bullets) b.draw();
+  }
+}
+
+// ══════════════════════════════════════════ Enemy ════════════════════════════
+const ECFG = [
+  {hp: 1, spd: [90, 180],  score: 10, w: 16, h: 16},   // grunt
+  {hp: 2, spd: [60, 120],  score: 20, w: 20, h: 16},   // shooter
+  {hp: 5, spd: [36,  60],  score: 50, w: 32, h: 24},   // tank
+];
+
+class Enemy {
+  constructor(type, x, y) {
+    this.type = type; this.x = x; this.y = y;
+    const c = ECFG[type];
+    this.hp    = c.hp; this.score = c.score;
+    this.w = c.w;      this.h = c.h;
+    this.speed   = c.spd[0] + Math.random() * (c.spd[1] - c.spd[0]);
+    this.t       = Math.random() * Math.PI * 2;
+    this.shootCd = 1 + Math.random();
+    this.bullets = []; this.alive = true;
+  }
+  update(dt) {
+    this.t += dt * 2.4;
+    if (this.type === 1) {
+      this.x += Math.sin(this.t) * 130 * dt;
+      this.x  = Math.max(this.w, Math.min(W - this.w, this.x));
+    }
+    this.y += this.speed * dt;
+
+    this.shootCd -= dt;
+    if (this.shootCd <= 0 && this.type >= 1) {
+      if (this.type === 1) {
+        this.bullets.push(new Bullet(this.x, this.y + this.h, 0, 300, C.RED, 1, 4, 10));
+        this.shootCd = 1.2 + Math.random();
+      } else {
+        for (const dx of [-150, 0, 150])
+          this.bullets.push(new Bullet(this.x, this.y + this.h, dx, 240, C.ORANGE, 2, 6, 10));
+        this.shootCd = 1.5 + Math.random() * 1.5;
+      }
+    }
+    for (const b of this.bullets) b.update(dt);
+    this.bullets = this.bullets.filter(b => b.alive);
+    if (this.y > H + 50) this.alive = false;
+  }
+  takeDamage(dmg = 1) {
+    this.hp -= dmg;
+    if (this.hp <= 0) { this.alive = false; return true; }
+    return false;
+  }
+  rect() { return {x: this.x - this.w/2, y: this.y - this.h/2, w: this.w, h: this.h}; }
+  draw() {
+    if (this.type === 0)      sprGrunt(this.x, this.y);
+    else if (this.type === 1) sprShooter(this.x, this.y);
+    else                      sprTank(this.x, this.y);
+    for (const b of this.bullets) b.draw();
+  }
+}
+
+// ══════════════════════════════════════════ Boss ══════════════════════════════
+class Boss {
+  static MAX_HP = 200;
+
+  constructor() {
+    this.x = W / 2; this.y = -80;
+    this.hp    = Boss.MAX_HP;
+    this.alive = true; this.phase = 1;
+    this.t = 0; this.shootCd = 1;
+    this.bullets = [];
+  }
+  get hpRatio() { return Math.max(0, this.hp / Boss.MAX_HP); }
+
+  update(dt, px, py) {
+    // Slide in from top
+    if (this.y < 100) { this.y = Math.min(this.y + 180 * dt, 100); return; }
+    this.t += dt;
+    this.x = W / 2 + Math.sin(this.t * 1.08) * 145;
+    if (this.hp <= Boss.MAX_HP / 2) this.phase = 2;
+
+    this.shootCd -= dt;
+    if (this.shootCd <= 0) this._shoot(px, py);
+
+    for (const b of this.bullets) b.update(dt);
+    this.bullets = this.bullets.filter(b => b.alive);
+  }
+  _shoot(px, py) {
+    const cx = this.x, cy = this.y + 30;
+    if (this.phase === 1) {
+      for (const deg of [-22, 0, 22]) {
+        const rad = (90 + deg) * Math.PI / 180;
+        this.bullets.push(new Bullet(cx, cy, Math.cos(rad)*300, Math.sin(rad)*300, C.RED, 1, 6, 12));
+      }
+      this.shootCd = 0.75;
+    } else {
+      for (const deg of [-40, -20, 0, 20, 40]) {
+        const rad = (90 + deg) * Math.PI / 180;
+        this.bullets.push(new Bullet(cx, cy, Math.cos(rad)*360, Math.sin(rad)*360, C.ORANGE, 1, 5, 10));
+      }
+      // Aimed shot toward player
+      const ddx = px - cx, ddy = py - cy;
+      const dist = Math.hypot(ddx, ddy) || 1;
+      this.bullets.push(new Bullet(cx, cy, ddx/dist*420, ddy/dist*420, C.PURPLE, 2, 8, 8));
+      this.shootCd = 0.47;
+    }
+  }
+  takeDamage(dmg = 1) {
+    this.hp = Math.max(0, this.hp - dmg);
+    if (this.hp === 0) this.alive = false;
+  }
+  rect() { return {x: this.x - 40, y: this.y - 30, w: 80, h: 60}; }
+  draw() {
+    sprBoss(this.x, this.y, this.hpRatio);
+    for (const b of this.bullets) b.draw();
+    // HP bar under the boss sprite
+    const BW = 300, bx = (W - BW) / 2;
+    ctx.fillStyle = C.DARK;    ctx.fillRect(bx-2, 10, BW+4, 18);
+    ctx.fillStyle = C.RED;     ctx.fillRect(bx,   12, BW * this.hpRatio, 14);
+    ctx.strokeStyle = C.WHITE; ctx.lineWidth = 2;
+    ctx.strokeRect(bx-2, 10, BW+4, 18);
+  }
+}
+
+// ══════════════════════════════════════════ Collision ════════════════════════
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// ══════════════════════════════════════════ HUD / UI ═════════════════════════
+function drawHUD(player, score, elapsed, bossMode) {
+  const rem = Math.max(0, LEVEL_TIME - elapsed);
+  const m = Math.floor(rem / 60), s = Math.floor(rem % 60);
+
+  ctx.textAlign = 'center'; ctx.font = 'bold 24px "Courier New", monospace';
+  ctx.fillStyle = rem < 15 ? C.RED : C.WHITE;
+  ctx.fillText(`${m}:${String(s).padStart(2,'0')}`, W/2, 34);
+
+  ctx.textAlign = 'left'; ctx.font = 'bold 16px "Courier New", monospace';
+  ctx.fillStyle = C.YELLOW;
+  ctx.fillText(`SCORE ${String(score).padStart(6,'0')}`, 10, 30);
+
+  for (let i = 0; i < player.maxHp; i++) {
+    ctx.fillStyle = i < player.hp ? C.CYAN : C.DARK;
+    ctx.fillRect(W - 20 - i * 18, 14, 14, 14);
+  }
+
+  if (bossMode) {
+    ctx.textAlign = 'center'; ctx.font = 'bold 13px "Courier New", monospace';
+    ctx.fillStyle = C.RED;
+    ctx.fillText('B O S S', W/2, 52);
+  }
+}
+
+function drawOverlay(title, sub, hint) {
+  ctx.fillStyle = 'rgba(0,0,0,0.62)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 46px "Courier New", monospace';
+  ctx.fillStyle = title === 'YOU WIN!' ? C.YELLOW : C.RED;
+  ctx.fillText(title, W/2, H/2 - 60);
+  ctx.font = 'bold 22px "Courier New", monospace';
+  ctx.fillStyle = C.WHITE;
+  ctx.fillText(sub, W/2, H/2 + 10);
+  ctx.font = 'bold 14px "Courier New", monospace';
+  ctx.fillStyle = C.GRAY;
+  ctx.fillText(hint, W/2, H/2 + 60);
+}
+
+function drawMenu(t) {
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 42px "Courier New", monospace';
+  ctx.fillStyle = C.CYAN;
+  ctx.fillText('PIXEL SHOOTER', W/2, 180);
+
+  const a = Math.floor(178 + 77 * Math.sin(t * 3));
+  ctx.font = 'bold 17px "Courier New", monospace';
+  ctx.fillStyle = `rgb(${a},${a},${a})`;
+  ctx.fillText('PRESS  ENTER  TO  START', W/2, 264);
+
+  ctx.fillStyle = C.GRAY;
+  ctx.font = 'bold 14px "Courier New", monospace';
+  [
+    'WASD / Arrow Keys  ─  Move',
+    'Auto Fire',
+    '',
+    'Survive 90 s  →  defeat the BOSS',
+    'ESC  ─  Quit',
+  ].forEach((l, i) => ctx.fillText(l, W/2, 334 + i * 28));
+}
+
+// ══════════════════════════════════════════ Game State ═══════════════════════
+let state = 'menu', menuT = 0;
+let stars, player, enemies, explosions, boss;
+let score, elapsed, spawnTimer, bossSpawned;
+
+// Stars live at all times (including menu)
+stars = new Stars();
+
+function initGame() {
+  stars       = new Stars();
+  player      = new Player();
+  enemies     = [];
+  explosions  = [];
+  boss        = null;
+  bossSpawned = false;
+  score       = 0;
+  elapsed     = 0;
+  spawnTimer  = 0;
+  state       = 'playing';
+}
+
+// ══════════════════════════════════════════ Update ═══════════════════════════
+function update(dt) {
+  stars.update(dt);
+
+  if (state === 'menu') {
+    menuT += dt;
+    if (consume('Enter') || consume('Space')) initGame();
+    return;
+  }
+
+  if (state === 'win' || state === 'gameover') {
+    if (consume('Enter')) initGame();
+    if (consume('Escape')) state = 'menu';
+    return;
+  }
+
+  elapsed += dt;
+  player.update(dt);
+
+  if (state === 'playing') {
+    // ── Spawn ──
+    spawnTimer -= dt;
+    if (spawnTimer <= 0 && elapsed < BOSS_AT) {
+      const wts = elapsed < 30 ? [10,0,0] : elapsed < 60 ? [6,4,0] : [4,4,2];
+      const tot = wts.reduce((a,b) => a+b, 0);
+      let r = Math.random() * tot, type = 0;
+      for (; type < 2 && r >= wts[type]; type++) r -= wts[type];
+      enemies.push(new Enemy(type, 32 + Math.random() * (W - 64), -32));
+      spawnTimer = Math.max(0.36, 1.46 - elapsed / 90);
+    }
+
+    // ── Boss trigger ──
+    if (elapsed >= BOSS_AT && !bossSpawned) {
+      boss = new Boss();
+      bossSpawned = true;
+      enemies = [];
+      state = 'boss';
+    } else {
+      // ── Enemy ↔ player collisions ──
+      for (const e of enemies) {
+        e.update(dt);
+        for (const b of e.bullets) {
+          if (b.alive && overlaps(b.rect(), player.rect())) {
+            b.alive = false;
+            if (player.takeDamage()) explosions.push(new Explosion(player.x, player.y));
+          }
+        }
+        for (const b of player.bullets) {
+          if (b.alive && overlaps(b.rect(), e.rect())) {
+            b.alive = false;
+            if (e.takeDamage()) { score += e.score; explosions.push(new Explosion(e.x, e.y)); }
+          }
+        }
+      }
+      enemies = enemies.filter(e => e.alive);
+
+      if (!player.alive) state = 'gameover';
+      if (elapsed >= LEVEL_TIME) state = 'gameover';
+    }
+  }
+
+  if (state === 'boss') {
+    boss.update(dt, player.x, player.y);
+
+    for (const b of player.bullets) {
+      if (b.alive && boss.alive && overlaps(b.rect(), boss.rect())) {
+        b.alive = false;
+        boss.takeDamage(1);
+        score += 2;
+        if (!boss.alive) {
+          for (let i = 0; i < 6; i++)
+            explosions.push(new Explosion(
+              boss.x + (Math.random()*70 - 35),
+              boss.y + (Math.random()*50 - 25), 2));
+          score += 2000;
+          state = 'win';
+        }
+      }
+    }
+    for (const b of boss.bullets) {
+      if (b.alive && overlaps(b.rect(), player.rect())) {
+        b.alive = false;
+        if (player.takeDamage()) explosions.push(new Explosion(player.x, player.y));
+      }
+    }
+    if (!player.alive) state = 'gameover';
+    if (elapsed >= LEVEL_TIME && state === 'boss') state = 'gameover';
+  }
+
+  explosions = explosions.filter(e => e.update(dt));
+}
+
+// ══════════════════════════════════════════ Draw ══════════════════════════════
+function draw() {
+  ctx.fillStyle = C.BG;
+  ctx.fillRect(0, 0, W, H);
+  stars.draw();
+
+  if (state === 'menu') { drawMenu(menuT); return; }
+
+  for (const e of enemies) e.draw();
+  if (boss && boss.alive) boss.draw();
+  player.draw();
+  for (const e of explosions) e.draw();
+
+  drawHUD(player, score, elapsed, state === 'boss');
+
+  if (state === 'win')
+    drawOverlay('YOU WIN!', `SCORE  ${String(score).padStart(6,'0')}`,
+                'ENTER — retry     ESC — menu');
+  else if (state === 'gameover')
+    drawOverlay('GAME OVER', `SCORE  ${String(score).padStart(6,'0')}`,
+                'ENTER — retry     ESC — menu');
+}
+
+// ══════════════════════════════════════════ Loop ══════════════════════════════
+let lastTs = 0;
+function loop(ts) {
+  const dt = lastTs === 0 ? 0 : Math.min((ts - lastTs) / 1000, 0.05);
+  lastTs = ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
