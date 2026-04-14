@@ -1,0 +1,11 @@
+{
+  "name": "pixel-shooter",
+  "version": "1.0.0",
+  "description": "A pixel art vertical-scrolling shoot-em-up web game",
+  "scripts": {
+    "dev": "npx serve . --listen 3000",
+    "start": "npx serve ."
+  },
+  "keywords": ["game", "pixel", "shooter", "canvas", "html5"],
+  "license": "MIT"
+}

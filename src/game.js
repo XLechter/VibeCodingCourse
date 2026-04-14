@@ -1,25 +1,3 @@
-<!DOCTYPE html>
-<html lang="zh">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pixel Shooter</title>
-  <style>
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 100%; height: 100%;
-      background: #000;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      overflow: hidden;
-    }
-    canvas { display: block; image-rendering: pixelated; }
-  </style>
-</head>
-<body>
-<canvas id="c"></canvas>
-<script>
 'use strict';
 
 // ══════════════════════════════════════════ Constants ════════════════════════
@@ -102,7 +80,6 @@ function sprTank(cx, cy) {
   px(cx-4,  cy+12,  8,  8, C.GRAY);
 }
 function sprBoss(cx, cy, r) {
-  // body colour shifts from purple → red as HP drops
   const rc = Math.round(80  + 120 * (1 - r));
   const gc = Math.round(20  + 40  * r);
   const bc = Math.round(200 * r   + 60 * (1 - r));
@@ -165,7 +142,7 @@ class Explosion {
 class Bullet {
   constructor(x, y, dx, dy, color, damage = 1, w = 4, h = 12) {
     this.x = x; this.y = y;
-    this.dx = dx; this.dy = dy;   // px / second
+    this.dx = dx; this.dy = dy;
     this.color = color; this.damage = damage;
     this.w = w; this.h = h; this.alive = true;
   }
@@ -187,10 +164,10 @@ class Player {
   constructor() {
     this.x = W / 2; this.y = H - 80;
     this.hp = 5; this.maxHp = 5;
-    this.speed    = 300;  // px/s
-    this.fireCd   = 0;    // seconds
-    this.fireRate = 0.2;  // seconds
-    this.invincible = 0;  // seconds
+    this.speed    = 300;
+    this.fireCd   = 0;
+    this.fireRate = 0.2;
+    this.invincible = 0;
     this.bullets = [];
     this.alive   = true;
   }
@@ -226,9 +203,9 @@ class Player {
 
 // ══════════════════════════════════════════ Enemy ════════════════════════════
 const ECFG = [
-  {hp: 1, spd: [90, 180],  score: 10, w: 16, h: 16},   // grunt
-  {hp: 2, spd: [60, 120],  score: 20, w: 20, h: 16},   // shooter
-  {hp: 5, spd: [36,  60],  score: 50, w: 32, h: 24},   // tank
+  {hp: 1, spd: [90, 180],  score: 10, w: 16, h: 16},
+  {hp: 2, spd: [60, 120],  score: 20, w: 20, h: 16},
+  {hp: 5, spd: [36,  60],  score: 50, w: 32, h: 24},
 ];
 
 class Enemy {
@@ -293,7 +270,6 @@ class Boss {
   get hpRatio() { return Math.max(0, this.hp / Boss.MAX_HP); }
 
   update(dt, px, py) {
-    // Slide in from top
     if (this.y < 100) { this.y = Math.min(this.y + 180 * dt, 100); return; }
     this.t += dt;
     this.x = W / 2 + Math.sin(this.t * 1.08) * 145;
@@ -318,7 +294,6 @@ class Boss {
         const rad = (90 + deg) * Math.PI / 180;
         this.bullets.push(new Bullet(cx, cy, Math.cos(rad)*360, Math.sin(rad)*360, C.ORANGE, 1, 5, 10));
       }
-      // Aimed shot toward player
       const ddx = px - cx, ddy = py - cy;
       const dist = Math.hypot(ddx, ddy) || 1;
       this.bullets.push(new Bullet(cx, cy, ddx/dist*420, ddy/dist*420, C.PURPLE, 2, 8, 8));
@@ -333,7 +308,6 @@ class Boss {
   draw() {
     sprBoss(this.x, this.y, this.hpRatio);
     for (const b of this.bullets) b.draw();
-    // HP bar under the boss sprite
     const BW = 300, bx = (W - BW) / 2;
     ctx.fillStyle = C.DARK;    ctx.fillRect(bx-2, 10, BW+4, 18);
     ctx.fillStyle = C.RED;     ctx.fillRect(bx,   12, BW * this.hpRatio, 14);
@@ -415,7 +389,6 @@ let state = 'menu', menuT = 0;
 let stars, player, enemies, explosions, boss;
 let score, elapsed, spawnTimer, bossSpawned;
 
-// Stars live at all times (including menu)
 stars = new Stars();
 
 function initGame() {
@@ -451,7 +424,6 @@ function update(dt) {
   player.update(dt);
 
   if (state === 'playing') {
-    // ── Spawn ──
     spawnTimer -= dt;
     if (spawnTimer <= 0 && elapsed < BOSS_AT) {
       const wts = elapsed < 30 ? [10,0,0] : elapsed < 60 ? [6,4,0] : [4,4,2];
@@ -462,14 +434,12 @@ function update(dt) {
       spawnTimer = Math.max(0.36, 1.46 - elapsed / 90);
     }
 
-    // ── Boss trigger ──
     if (elapsed >= BOSS_AT && !bossSpawned) {
       boss = new Boss();
       bossSpawned = true;
       enemies = [];
       state = 'boss';
     } else {
-      // ── Enemy ↔ player collisions ──
       for (const e of enemies) {
         e.update(dt);
         for (const b of e.bullets) {
@@ -556,6 +526,3 @@ function loop(ts) {
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-</script>
-</body>
-</html>
